@@ -1,3 +1,4 @@
+// Popup.js
 import React from "react";
 
 function Popup({
@@ -17,11 +18,9 @@ function Popup({
           {options.length > 0 ? (
             options.map((option, index) => (
               <div key={index} style={optionItemStyles}>
-                {/* 展示文本 & 当前票数 */}
                 <span>
                   {option.text} (票数: {option.number})
                 </span>
-                {/* 点击后将 pollId, index 传回父组件处理 */}
                 <button
                   onClick={() => handleOptionClick(option, pollId, index)}
                 >

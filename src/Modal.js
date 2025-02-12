@@ -1,22 +1,21 @@
+// Modal.js
 import React, { useState } from "react";
 
 function Modal({ closeModal, createPollOnChain }) {
-  // 用于保存用户输入的标题、详情和选项
+  // 用于保存标题、详情、选项、以及持续时长（秒）
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
   const [numOptions, setNumOptions] = useState(1);
   const [options, setOptions] = useState([{ text: "", number: 0 }]);
+  const [duration, setDuration] = useState(300); // 默认300秒
 
-  // 标题/详情
   const handleTitleChange = (e) => setTitle(e.target.value);
   const handleDetailsChange = (e) => setDetails(e.target.value);
 
-  // 动态选项数量
   const handleNumOptionsChange = (e) => {
     const newNumOptions = parseInt(e.target.value, 10);
     if (newNumOptions >= 1) {
       setNumOptions(newNumOptions);
-      // 重置选项数组
       const updated = [];
       for (let i = 0; i < newNumOptions; i++) {
         updated.push({ text: "", number: 0 });
@@ -25,7 +24,6 @@ function Modal({ closeModal, createPollOnChain }) {
     }
   };
 
-  // 处理每个选项的输入
   const handleOptionChange = (index, e) => {
     const { name, value } = e.target;
     const newOptions = [...options];
@@ -33,13 +31,14 @@ function Modal({ closeModal, createPollOnChain }) {
     setOptions(newOptions);
   };
 
-  // 提交投票
-  const handleSubmit = async () => {
-    // 2. 调用合约创建
-    if (createPollOnChain) {
-      await createPollOnChain(title, details, options);
-    }
+  const handleDurationChange = (e) => {
+    setDuration(parseInt(e.target.value, 10));
+  };
 
+  const handleSubmit = async () => {
+    if (createPollOnChain) {
+      await createPollOnChain(title, details, options, duration);
+    }
     closeModal();
   };
 
@@ -93,6 +92,18 @@ function Modal({ closeModal, createPollOnChain }) {
               />
             </div>
           ))}
+        </div>
+        <div>
+          <label>
+            投票持续时长（秒）:
+            <input
+              type="number"
+              value={duration}
+              onChange={handleDurationChange}
+              min="1"
+              style={inputStyles}
+            />
+          </label>
         </div>
         <button onClick={handleSubmit} style={buttonStyles}>
           确认

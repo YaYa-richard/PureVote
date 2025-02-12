@@ -1,3 +1,4 @@
+// App.js
 import React, { useState, useEffect } from "react";
 import Popup from "./Popup";
 import Modal from "./Modal";
@@ -8,11 +9,10 @@ import "./App.css";
 
 function App() {
   // ================== React 状态管理 ==================
-  const [items, setItems] = useState([]); // 存储从合约中读取的投票信息
+  const [items, setItems] = useState([]); // 从合约加载的投票信息，每项包含 id, title, details, options, deadline
   const [isPopupOpen, setIsPopupOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
-  const [inputValue, setInputValue] = useState("");
   const [fingerprint, setFingerprint] = useState("");
 
   // MetaMask 相关
@@ -20,9 +20,19 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [chainId, setChainId] = useState(null);
 
-  // ================== 合约地址（从环境变量中读取） ==================
-  // 请在 .env 文件中配置：REACT_APP_VOTING_CONTRACT_ADDRESS=0xYourContractAddress
+  // 当前时间（秒），用于倒计时显示
+  const [currentTime, setCurrentTime] = useState(Math.floor(Date.now() / 1000));
+
+  // 合约地址从环境变量中读取（请在 .env 中配置 REACT_APP_VOTING_CONTRACT_ADDRESS）
   const contractAddress = process.env.REACT_APP_VOTING_CONTRACT_ADDRESS;
+
+  // ================== 定时更新当前时间 ==================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ================== useEffect 初始化 ==================
   useEffect(() => {
@@ -44,11 +54,6 @@ function App() {
     setupEventListeners();
     return () => removeEventListeners();
   }, []);
-
-  // 当 items 更新时，存入 sessionStorage（演示用）
-  useEffect(() => {
-    sessionStorage.setItem("modalData", JSON.stringify(items));
-  }, [items]);
 
   // ================== MetaMask 事件监听 ==================
   const setupEventListeners = () => {
@@ -78,14 +83,12 @@ function App() {
     } else {
       setWalletAddress(accounts[0]);
       setIsConnected(true);
-      // 账户变更后自动加载投票
       loadPollsFromContract();
     }
   };
 
   const handleChainChanged = (chainId) => {
     setChainId(chainId);
-    // 为了确保状态刷新，可以强制刷新
     window.location.reload();
   };
 
@@ -110,7 +113,6 @@ function App() {
       const currentChainId = await ethereum.request({ method: "eth_chainId" });
       setChainId(currentChainId);
       const accounts = await ethereum.request({ method: "eth_accounts" });
-
       if (accounts.length !== 0) {
         setWalletAddress(accounts[0]);
         setIsConnected(true);
@@ -140,8 +142,6 @@ function App() {
       console.log("已连接到钱包:", accounts[0]);
       const currentChainId = await ethereum.request({ method: "eth_chainId" });
       setChainId(currentChainId);
-
-      // 连接完成后自动加载投票
       await loadPollsFromContract();
     } catch (error) {
       console.error("连接钱包时出错:", error);
@@ -157,7 +157,7 @@ function App() {
     setWalletAddress("");
     setIsConnected(false);
     setChainId(null);
-    setItems([]); // 清空界面数据
+    setItems([]);
   };
 
   // ================== 连接合约的帮助函数 ==================
@@ -169,8 +169,7 @@ function App() {
       return null;
     }
     const provider = new ethers.BrowserProvider(window.ethereum);
-
-    const signer = await provider.getSigner(); // 一定要 await
+    const signer = await provider.getSigner();
     return new ethers.Contract(contractAddress, VotingPlatformABI.abi, signer);
   };
 
@@ -179,15 +178,18 @@ function App() {
     try {
       const contract = await getContract();
       if (!contract) return;
-      const [ids, titles] = await contract.getPollSummaries();
+      // 调用 getPollSummaries 返回 [ids, titles, deadlines]
+      const [ids, titles, deadlines] = await contract.getPollSummaries();
       let loadedPolls = [];
       for (let i = 0; i < ids.length; i++) {
         const pollId = Number(ids[i]);
+        // 调用 getPoll 获取详细信息 (返回 [title, details, options, votes, deadline])
         const pollData = await contract.getPoll(pollId);
         const title = pollData[0];
         const details = pollData[1];
-        const options = pollData[2]; // string[] 选项文本
-        const votes = pollData[3]; // uint256[] 选项票数
+        const options = pollData[2];
+        const votes = pollData[3];
+        const deadline = Number(pollData[4]);
         let optionObjects = options.map((optText, idx) => ({
           text: optText,
           number: Number(votes[idx]),
@@ -197,6 +199,7 @@ function App() {
           title,
           details,
           options: optionObjects,
+          deadline,
         });
       }
       setItems(loadedPolls);
@@ -206,12 +209,11 @@ function App() {
   };
 
   // ================== 创建投票（在 Modal 中操作） ==================
-  // ================== 创建投票（在 Modal 中操作） ==================
-  const createPollOnChain = async (title, details, optionsArray) => {
+  // 新的 createPollOnChain 需要传入 duration（单位：秒）
+  const createPollOnChain = async (title, details, optionsArray, duration) => {
     try {
       const contract = await getContract();
       if (!contract) return;
-
       const optionTexts = optionsArray.map((opt) => opt.text);
       if (
         optionTexts.length === 0 ||
@@ -220,28 +222,36 @@ function App() {
         alert("请确保所有选项都有内容");
         return;
       }
-
-      // 发起交易
+      // 发起交易，传入 duration 参数
       const txResponse = await contract.createPoll(
         title,
         details,
         optionTexts,
+        duration,
         {
           gasLimit: 300000,
         }
       );
-      // 等待上链
       const txReceipt = await txResponse.wait();
-
-      // v6: 可以这样拿到合约函数返回值 (如果合约中 "returns (uint256)")
-      // 某些情况下需要 txReceipt.logs 并解析事件，如果 returns 未能捕捉，也可从 PollCreated 事件中取
-      const newPollId = txReceipt?.returnValue?.toString();
-      console.log("New poll ID:", newPollId);
-
+      // 尝试从 PollCreated 事件中解析新投票 ID
+      let newPollId;
+      for (const log of txReceipt.logs) {
+        try {
+          const parsedLog = contract.interface.parseLog(log);
+          if (parsedLog.name === "PollCreated") {
+            newPollId = parsedLog.args.pollId;
+            break;
+          }
+        } catch (e) {
+          // 忽略无法解析的日志
+        }
+      }
+      if (newPollId) {
+        console.log("New poll ID:", newPollId.toString());
+      } else {
+        console.warn("未能解析到 PollCreated 事件，新 pollId 为空");
+      }
       alert("投票已创建成功!");
-
-      // 手动更新前端 items (如果想马上显示)
-      // 也可先 loadPollsFromContract() 再找出 pollId = newPollId 的条目
       await loadPollsFromContract();
     } catch (error) {
       console.error("createPollOnChain 出错:", error);
@@ -252,13 +262,14 @@ function App() {
   // ================== 进行投票（单选） ==================
   const voteOnChain = async (pollId, optionIndex) => {
     try {
+      if (pollId === undefined) {
+        throw new Error("pollId is undefined");
+      }
       const contract = await getContract();
       if (!contract) return;
-
       const tx = await contract.vote(pollId, optionIndex);
       await tx.wait();
       alert("投票成功!");
-      // 更新当前投票的票数
       await loadPollsFromContract();
     } catch (error) {
       console.error("voteOnChain 出错:", error);
@@ -274,18 +285,35 @@ function App() {
   const closePopup = () => {
     setIsPopupOpen(false);
     setSelectedItem(null);
-    setInputValue("");
   };
   const closeModal = async () => {
     setIsModalOpen(false);
-    setInputValue("");
   };
 
-  // 投票操作（弹窗内点击）
+  // 投票操作（点击投票选项前检查是否还在有效期）
   const handleOptionClick = (option, pollId, index) => {
-    console.log("选中的投票 ID:", pollId, "选项序号:", index);
-    // 调用合约投票
+    // 在 items 中查找当前投票对象
+    const poll = items.find((item) => item.id === pollId);
+    if (poll) {
+      if (currentTime >= poll.deadline) {
+        alert("投票已结束");
+        return;
+      }
+    }
     voteOnChain(pollId, index);
+  };
+
+  // 渲染倒计时文本
+  const renderCountdown = (deadline) => {
+    const remaining = deadline - currentTime;
+    if (remaining > 0) {
+      // 格式化为 分:秒 或直接显示秒数
+      const minutes = Math.floor(remaining / 60);
+      const seconds = remaining % 60;
+      return `剩余时间：${minutes}分${seconds}秒`;
+    } else {
+      return "已结束";
+    }
   };
 
   // ================== 页面渲染 ==================
@@ -293,7 +321,7 @@ function App() {
     <div className="App" style={{ position: "relative" }}>
       <h1>去中心化投票 Demo</h1>
 
-      {/* ========== MetaMask 连接状态和操作 ========== */}
+      {/* MetaMask 连接状态 */}
       <div className="wallet-section" style={{ margin: "20px 0" }}>
         {!isConnected ? (
           <button onClick={connectWallet} className="wallet-button">
@@ -313,7 +341,7 @@ function App() {
         )}
       </div>
 
-      {/* ========== 创建投票按钮 ========== */}
+      {/* 创建投票按钮 */}
       <button onClick={openModal}>添加投票</button>
 
       <div>
@@ -322,7 +350,7 @@ function App() {
           {items.length > 0 ? (
             items.map((item, index) => (
               <li key={index} onClick={() => openPopup(item)}>
-                {item.title}
+                {item.title} - {renderCountdown(item.deadline)}
               </li>
             ))
           ) : (
@@ -331,12 +359,12 @@ function App() {
         </ul>
       </div>
 
-      {/* ========== 弹出新建投票的 Modal ========== */}
+      {/* 弹出创建投票的 Modal */}
       {isModalOpen && (
         <Modal closeModal={closeModal} createPollOnChain={createPollOnChain} />
       )}
 
-      {/* ========== 投票详情弹窗 ========== */}
+      {/* 投票详情弹窗 */}
       {isPopupOpen && selectedItem && (
         <Popup
           title={selectedItem.title}
@@ -348,7 +376,7 @@ function App() {
         />
       )}
 
-      {/* 指纹信息显示 */}
+      {/* 显示用户指纹 */}
       <div>{fingerprint && <p>User Fingerprint: {fingerprint}</p>}</div>
     </div>
   );
