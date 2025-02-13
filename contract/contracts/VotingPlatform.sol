@@ -2,23 +2,26 @@
 pragma solidity ^0.8.0;
 
 contract VotingPlatform {
-    // 定义投票结构体，包含标题、详情、选项、票数、截止时间以及防止重复投票的映射
+    // 定义投票结构体，包含标题、详情、选项、票数、截止时间及防止重复投票的映射
     struct Poll {
         string title;                   // 投票标题
-        string details;                 // 投票详情（与前端字段名保持一致）
-        string[] options;               // 投票选项文本（数量可变）
+        string details;                 // 投票详情
+        string[] options;               // 投票选项文本
         uint256[] votes;                // 各选项票数
-        mapping(address => bool) hasVoted; // 记录每个地址是否已投票（仅限本投票）
+        mapping(address => bool) hasVoted; // 限制同一地址只能投一次
         bool exists;                    // 标记投票是否存在
         uint256 deadline;               // 投票截止时间（block.timestamp + duration）
     }
     
     uint256 public pollCount;           // 投票总数（投票 ID 从 1 开始）
-    mapping(uint256 => Poll) private polls;  // 通过投票 ID 存储所有投票
+    mapping(uint256 => Poll) private polls;
 
-    // 事件：创建投票时触发（不暴露创建者信息）
+    // 新增：每个投票对应一个 mapping，存储已使用过的 fingerprint 哈希
+    mapping(uint256 => mapping(bytes32 => bool)) private pollFingerprints;
+
+    // 事件：创建投票时触发（返回截止时间）
     event PollCreated(uint256 indexed pollId, string title, uint256 deadline);
-    // 事件：用户投票时触发（不暴露投票者地址以保护隐私）
+    // 事件：用户投票时触发（不暴露投票者信息）
     event Voted(uint256 indexed pollId, uint256 optionIndex);
 
     /**
@@ -26,7 +29,7 @@ contract VotingPlatform {
      * @param _title 投票标题
      * @param _details 投票详情
      * @param _options 投票选项数组（前端传入时建议仅传选项文本）
-     * @param _duration 投票持续时长，单位为秒
+     * @param _duration 投票持续时长（秒）
      * @return 返回新投票的 ID
      */
     function createPoll(
@@ -38,12 +41,11 @@ contract VotingPlatform {
         require(_options.length > 0, "at least one vote");
         pollCount++; // 投票 ID 自增
 
-        // 由于 Poll 中含有 mapping，不能在内存中直接构造，因此在 storage 中创建
         Poll storage newPoll = polls[pollCount];
         newPoll.title = _title;
         newPoll.details = _details;
         newPoll.exists = true;
-        newPoll.deadline = block.timestamp + _duration; // 计算截止时间
+        newPoll.deadline = block.timestamp + _duration; // 设定截止时间
 
         for (uint256 i = 0; i < _options.length; i++) {
             newPoll.options.push(_options[i]);
@@ -57,17 +59,20 @@ contract VotingPlatform {
      * @notice 对指定投票进行投票（单选）
      * @param _pollId 投票的 ID
      * @param _optionIndex 选择的选项下标（从 0 开始）
+     * @param _fingerprint 用户 fingerprint 的哈希（例如 keccak256 后的值）
      */
-    function vote(uint256 _pollId, uint256 _optionIndex) public {
+    function vote(uint256 _pollId, uint256 _optionIndex, bytes32 _fingerprint) public {
         require(_pollId > 0 && _pollId <= pollCount, "vote does not exist");
         Poll storage poll = polls[_pollId];
         require(poll.exists, "vote does not exist");
         require(block.timestamp <= poll.deadline, "voting period ended");
         require(_optionIndex < poll.options.length, "choice does not exist");
-        require(!poll.hasVoted[msg.sender], "already voted");
+        require(!poll.hasVoted[msg.sender], "already voted by address");
+        require(!pollFingerprints[_pollId][_fingerprint], "already voted by fingerprint");
         
         poll.votes[_optionIndex] += 1;
         poll.hasVoted[msg.sender] = true;
+        pollFingerprints[_pollId][_fingerprint] = true;
         emit Voted(_pollId, _optionIndex);
     }
 
@@ -122,5 +127,6 @@ contract VotingPlatform {
         return (ids, titles, deadlines);
     }
 }
+
 
 

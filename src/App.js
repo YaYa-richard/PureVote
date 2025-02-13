@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import Popup from "./Popup";
 import Modal from "./Modal";
 import FingerprintJS from "@fingerprintjs/fingerprintjs";
-import { ethers } from "ethers"; // 引入 ethers.js
+import { ethers, keccak256, toUtf8Bytes } from "ethers";
 import VotingPlatformABI from "./VotingPlatformABI.json";
 import "./App.css";
 
@@ -260,6 +260,7 @@ function App() {
   };
 
   // ================== 进行投票（单选） ==================
+  // 进行投票（单选）时，增加 fingerprint 参数
   const voteOnChain = async (pollId, optionIndex) => {
     try {
       if (pollId === undefined) {
@@ -267,7 +268,9 @@ function App() {
       }
       const contract = await getContract();
       if (!contract) return;
-      const tx = await contract.vote(pollId, optionIndex);
+      // 使用 ethers v6 的导入函数计算 fingerprint 的哈希
+      const fpHash = keccak256(toUtf8Bytes(fingerprint));
+      const tx = await contract.vote(pollId, optionIndex, fpHash);
       await tx.wait();
       alert("投票成功!");
       await loadPollsFromContract();
